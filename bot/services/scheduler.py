@@ -49,6 +49,12 @@ class ReminderScheduler:
             # Получить всех пользователей
             users = await db.get_all_users()
 
+            # Расчёт временного диапазона (сегодня + завтра для учёта всех напоминаний)
+            tz = pytz.timezone(config.TIMEZONE)
+            now = datetime.now(tz)
+            today = now.strftime('%Y-%m-%d')
+            tomorrow = (now + timedelta(days=1)).strftime('%Y-%m-%d')
+
             for user in users:
                 # Проверить настройки
                 settings = await db.get_settings(user.chat_id)
@@ -57,7 +63,11 @@ class ReminderScheduler:
                     continue
 
                 # Получить расписание на сегодня и завтра
-                schedule_result = await wp_api.get_schedule(user.chat_id, period='today')
+                schedule_result = await wp_api.get_schedule(
+                    user.chat_id,
+                    date_from=today,
+                    date_to=tomorrow
+                )
 
                 if not schedule_result.get('success'):
                     continue
@@ -88,16 +98,20 @@ class ReminderScheduler:
             if already_sent:
                 return
 
-            # Парсинг времени начала
+            # Парсинг времени начала с учетом timezone
             start_date = booking['start_date']
             start_time = booking['start_time']
 
             # Формирование datetime
             start_datetime_str = f"{start_date} {start_time}"
-            start_datetime = datetime.strptime(start_datetime_str, "%Y-%m-%d %H:%M")
+            tz = pytz.timezone(config.TIMEZONE)
 
-            # Текущее время
-            now = datetime.now()
+            # Парсим как naive datetime и затем локализуем
+            naive_datetime = datetime.strptime(start_datetime_str, "%Y-%m-%d %H:%M")
+            start_datetime = tz.localize(naive_datetime)
+
+            # Текущее время с timezone
+            now = datetime.now(tz)
 
             # Время когда нужно отправить напоминание
             reminder_time = start_datetime - timedelta(minutes=minutes_before)

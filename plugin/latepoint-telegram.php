@@ -113,6 +113,9 @@ class LatePoint_Telegram {
         if (!get_option('latepoint_telegram_bot_url')) {
             add_option('latepoint_telegram_bot_url', '');
         }
+        if (!get_option('latepoint_telegram_bot_username')) {
+            add_option('latepoint_telegram_bot_username', 'blagovestnet_bot');
+        }
         if (!get_option('latepoint_telegram_webhook_secret')) {
             add_option('latepoint_telegram_webhook_secret', bin2hex(random_bytes(32)));
         }
@@ -160,6 +163,7 @@ class LatePoint_Telegram {
     public function register_settings() {
         register_setting('latepoint_telegram_options', 'latepoint_telegram_bot_token');
         register_setting('latepoint_telegram_options', 'latepoint_telegram_bot_url');
+        register_setting('latepoint_telegram_options', 'latepoint_telegram_bot_username');
         register_setting('latepoint_telegram_options', 'latepoint_telegram_webhook_secret');
     }
 

@@ -5,6 +5,10 @@
 import asyncio
 import logging
 import sys
+import signal
+import hmac
+from datetime import datetime
+import pytz
 from aiohttp import web
 
 from aiogram import Bot, Dispatcher
@@ -18,16 +22,46 @@ from services.scheduler import ReminderScheduler
 from handlers import commands, callbacks
 from handlers.notifications import NotificationHandler
 
-# Настройка логирования
+# Настройка логирования с ротацией
+from logging.handlers import RotatingFileHandler
+import os
+
+# Создать директорию для логов если не существует
+os.makedirs(config.LOG_FILE.parent, exist_ok=True)
+
+# Настройка handlers
+file_handler = RotatingFileHandler(
+    config.LOG_FILE,
+    maxBytes=config.LOG_MAX_BYTES,
+    backupCount=config.LOG_BACKUP_COUNT
+)
+file_handler.setLevel(getattr(logging, config.LOG_LEVEL))
+file_handler.setFormatter(logging.Formatter(config.LOG_FORMAT))
+
+console_handler = logging.StreamHandler(sys.stdout)
+console_handler.setLevel(getattr(logging, config.LOG_LEVEL))
+console_handler.setFormatter(logging.Formatter(config.LOG_FORMAT))
+
+# Базовая конфигурация
 logging.basicConfig(
     level=getattr(logging, config.LOG_LEVEL),
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.FileHandler(config.LOG_FILE),
-        logging.StreamHandler(sys.stdout)
-    ]
+    handlers=[file_handler, console_handler]
 )
+
 logger = logging.getLogger(__name__)
+
+# Флаг для graceful shutdown
+shutdown_event = asyncio.Event()
+
+
+def setup_signal_handlers():
+    """Настройка обработчиков системных сигналов"""
+    def signal_handler(sig, frame):
+        logger.info(f"Received signal {sig}, initiating graceful shutdown...")
+        shutdown_event.set()
+
+    signal.signal(signal.SIGTERM, signal_handler)
+    signal.signal(signal.SIGINT, signal_handler)
 
 
 class TelegramBotService:
@@ -68,9 +102,9 @@ class TelegramBotService:
         """Обработка webhook от WordPress"""
         try:
             # Проверка секретного ключа
-            webhook_secret = request.headers.get('X-Webhook-Secret')
+            webhook_secret = request.headers.get('X-Webhook-Secret', '')
 
-            if webhook_secret != config.WEBHOOK_SECRET:
+            if not hmac.compare_digest(webhook_secret, config.WEBHOOK_SECRET):
                 logger.warning("Invalid webhook secret")
                 return web.json_response({'success': False, 'message': 'Invalid secret'}, status=401)
 
@@ -93,19 +127,46 @@ class TelegramBotService:
             return web.json_response({'success': False, 'message': str(e)}, status=500)
 
     async def health_check(self, request: web.Request) -> web.Response:
-        """Health check endpoint"""
-        return web.json_response({
+        """Health check endpoint с детальной информацией"""
+        health_status = {
             'status': 'ok',
             'service': 'telegram-bot',
-            'version': '1.0.0'
-        })
+            'version': '1.0.0',
+            'timestamp': datetime.now(pytz.timezone(config.TIMEZONE)).isoformat(),
+        }
+
+        # Проверка БД
+        try:
+            async with db.get_session() as session:
+                await session.execute('SELECT 1')
+            health_status['database'] = 'ok'
+        except Exception as e:
+            health_status['database'] = f'error: {str(e)}'
+            health_status['status'] = 'degraded'
+
+        # Проверка WordPress API
+        try:
+            if wp_api.session and not wp_api.session.closed:
+                health_status['wordpress_api'] = 'connected'
+            else:
+                health_status['wordpress_api'] = 'disconnected'
+        except Exception as e:
+            health_status['wordpress_api'] = f'error: {str(e)}'
+
+        # Проверка планировщика
+        try:
+            health_status['scheduler'] = 'running' if self.scheduler.scheduler.running else 'stopped'
+        except Exception as e:
+            health_status['scheduler'] = f'error: {str(e)}'
+
+        return web.json_response(health_status)
 
     async def handle_agent_token(self, request: web.Request) -> web.Response:
         """Обработка нового agent token от WordPress"""
         try:
             # Проверка секретного ключа
-            webhook_secret = request.headers.get('X-Webhook-Secret')
-            if webhook_secret != config.WEBHOOK_SECRET:
+            webhook_secret = request.headers.get('X-Webhook-Secret', '')
+            if not hmac.compare_digest(webhook_secret, config.WEBHOOK_SECRET):
                 logger.warning("Invalid webhook secret for agent token")
                 return web.json_response({'success': False, 'message': 'Invalid secret'}, status=401)
 
@@ -153,8 +214,8 @@ class TelegramBotService:
         """Обработка отвязки Telegram аккаунта"""
         try:
             # Проверка секретного ключа
-            webhook_secret = request.headers.get('X-Webhook-Secret')
-            if webhook_secret != config.WEBHOOK_SECRET:
+            webhook_secret = request.headers.get('X-Webhook-Secret', '')
+            if not hmac.compare_digest(webhook_secret, config.WEBHOOK_SECRET):
                 logger.warning("Invalid webhook secret for unbind")
                 return web.json_response({'success': False, 'message': 'Invalid secret'}, status=401)
 
@@ -245,8 +306,20 @@ class TelegramBotService:
         logger.info("Bot is running in webhook mode...")
 
         try:
-            # Запуск polling для обработки команд
-            await self.dp.start_polling(self.bot)
+            # Создаём задачу polling
+            polling_task = asyncio.create_task(self.dp.start_polling(self.bot))
+
+            # Ждём сигнала завершения
+            await shutdown_event.wait()
+
+            logger.info("Shutdown signal received, stopping polling...")
+            polling_task.cancel()
+
+            try:
+                await polling_task
+            except asyncio.CancelledError:
+                logger.info("Polling task cancelled successfully")
+
         finally:
             await runner.cleanup()
             await self.on_shutdown()
@@ -254,6 +327,9 @@ class TelegramBotService:
 
 async def main():
     """Главная функция"""
+    # Настройка обработчиков сигналов
+    setup_signal_handlers()
+
     # Проверка конфигурации
     if config.BOT_TOKEN == 'YOUR_BOT_TOKEN_HERE':
         logger.error("Bot token not configured! Please set BOT_TOKEN in config.py or environment variable.")

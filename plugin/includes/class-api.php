@@ -44,35 +44,35 @@ class LatePoint_Telegram_API {
         register_rest_route($this->namespace, '/register', array(
             'methods' => 'POST',
             'callback' => array($this, 'register_user'),
-            'permission_callback' => '__return_true', // Публичный endpoint с проверкой токена
+            'permission_callback' => '__return_true', // Публичный endpoint с проверкой токена внутри
         ));
 
         // Получение расписания
         register_rest_route($this->namespace, '/schedule', array(
             'methods' => 'GET',
             'callback' => array($this, 'get_schedule'),
-            'permission_callback' => '__return_true',
+            'permission_callback' => array($this, 'verify_bot_request_permission'),
         ));
 
         // Получение деталей бронирования
         register_rest_route($this->namespace, '/booking/(?P<id>\d+)', array(
             'methods' => 'GET',
             'callback' => array($this, 'get_booking'),
-            'permission_callback' => '__return_true',
+            'permission_callback' => array($this, 'verify_bot_request_permission'),
         ));
 
         // Обновление статуса бронирования
         register_rest_route($this->namespace, '/booking/(?P<id>\d+)/status', array(
             'methods' => 'POST',
             'callback' => array($this, 'update_booking_status'),
-            'permission_callback' => '__return_true',
+            'permission_callback' => array($this, 'verify_bot_request_permission'),
         ));
 
         // Получение информации о пользователе по chat_id
         register_rest_route($this->namespace, '/user-info', array(
             'methods' => 'GET',
             'callback' => array($this, 'get_user_info'),
-            'permission_callback' => '__return_true',
+            'permission_callback' => array($this, 'verify_bot_request_permission'),
         ));
 
         // === Новые эндпоинты для agent tokens ===
@@ -118,6 +118,34 @@ class LatePoint_Telegram_API {
      */
     public function check_user_permission() {
         return is_user_logged_in();
+    }
+
+    /**
+     * Проверка прав доступа к API (для запросов от бота)
+     * Проверяет что chat_id зарегистрирован в системе
+     */
+    public function verify_bot_request_permission($request) {
+        // Проверка через webhook secret для внутренних запросов
+        $webhook_secret = $request->get_header('X-Webhook-Secret');
+        $stored_secret = get_option('latepoint_telegram_webhook_secret');
+
+        if ($webhook_secret && $webhook_secret === $stored_secret) {
+            return true;
+        }
+
+        // Проверка что chat_id зарегистрирован
+        $chat_id = $request->get_param('chat_id');
+        if (empty($chat_id)) {
+            return false;
+        }
+
+        // Проверить что этот chat_id существует в системе
+        $users = get_users(array(
+            'meta_key' => 'telegram_chat_id',
+            'meta_value' => $chat_id,
+        ));
+
+        return !empty($users);
     }
 
     /**
