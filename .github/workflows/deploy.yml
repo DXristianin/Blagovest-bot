@@ -35,22 +35,25 @@ jobs:
             # Создать директорию для backup если её нет
             mkdir -p /opt/backups
 
-            # Backup перед деплоем
-            echo "📦 Creating backup..."
-            BACKUP_FILE="/opt/backups/blagovest-bot-backup-$(date +%Y%m%d_%H%M%S).tar.gz"
+            # Backup критичных данных (БД + конфиг) перед деплоем
+            # Код не бекапим - он в Git и восстанавливается через git pull
+            echo "📦 Creating backup of critical data..."
+            BACKUP_FILE="/opt/backups/blagovest-data-backup-$(date +%Y%m%d_%H%M%S).tar.gz"
+
+            cd /opt/blagovest-telegram-bot
             tar -czf "$BACKUP_FILE" \
-              /opt/blagovest-telegram-bot/*.py \
-              /opt/blagovest-telegram-bot/handlers/ \
-              /opt/blagovest-telegram-bot/services/ \
-              /opt/blagovest-telegram-bot/database/ \
-              2>/dev/null || echo "⚠️  Warning: Some files missing (first deploy?)"
+              --ignore-failed-read \
+              bot_data.db \
+              config.py \
+              2>/dev/null || echo "⚠️  Warning: Some files not found (first deploy?)"
 
             if [ -f "$BACKUP_FILE" ]; then
-              echo "✅ Backup created: $BACKUP_FILE"
+              BACKUP_SIZE=$(du -h "$BACKUP_FILE" | cut -f1)
+              echo "✅ Backup created: $BACKUP_FILE ($BACKUP_SIZE)"
             fi
 
-            # Ограничить количество backup файлов (оставить последние 5)
-            ls -t /opt/backups/blagovest-bot-backup-*.tar.gz 2>/dev/null | tail -n +6 | xargs -r rm
+            # Ротация: оставить последние 5 бекапов
+            ls -t /opt/backups/blagovest-data-backup-*.tar.gz 2>/dev/null | tail -n +6 | xargs -r rm
 
             # Проверить существование директории бота
             if [ ! -d "/opt/blagovest-telegram-bot" ]; then
