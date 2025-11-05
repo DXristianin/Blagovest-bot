@@ -13,6 +13,16 @@ bot/.env
 .env
 *.secret
 
+# Installation and setup files (may contain tokens)
+bot/INSTALLATION_STATUS.txt
+bot/DONE.txt
+bot/QUICK_START.txt
+bot/SETUP_GUIDE.md
+bot/USER_GUIDE.txt
+INSTALLATION_*.txt
+DONE.txt
+QUICK_START.txt
+
 # WordPress конфиги
 plugin/config.php
 
