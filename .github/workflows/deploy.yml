@@ -1,0 +1,176 @@
+name: Deploy LatePoint Telegram Integration
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'bot/**'
+      - 'plugin/**'
+      - '.github/workflows/deploy.yml'
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    name: Deploy to VPS
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Deploy to VPS via SSH
+        uses: appleboy/ssh-action@v1.0.0
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USERNAME }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          port: ${{ secrets.VPS_PORT || 22 }}
+          script: |
+            set -e
+
+            echo "=========================================="
+            echo "🚀 Starting deployment..."
+            echo "=========================================="
+
+            # Создать директорию для backup если её нет
+            mkdir -p /opt/backups
+
+            # Backup перед деплоем
+            echo "📦 Creating backup..."
+            BACKUP_FILE="/opt/backups/blagovest-bot-backup-$(date +%Y%m%d_%H%M%S).tar.gz"
+            tar -czf "$BACKUP_FILE" \
+              /opt/blagovest-telegram-bot/*.py \
+              /opt/blagovest-telegram-bot/handlers/ \
+              /opt/blagovest-telegram-bot/services/ \
+              /opt/blagovest-telegram-bot/database/ \
+              2>/dev/null || echo "⚠️  Warning: Some files missing (first deploy?)"
+
+            if [ -f "$BACKUP_FILE" ]; then
+              echo "✅ Backup created: $BACKUP_FILE"
+            fi
+
+            # Ограничить количество backup файлов (оставить последние 5)
+            ls -t /opt/backups/blagovest-bot-backup-*.tar.gz 2>/dev/null | tail -n +6 | xargs -r rm
+
+            # Проверить существование директории бота
+            if [ ! -d "/opt/blagovest-telegram-bot" ]; then
+              echo "📁 Creating bot directory..."
+              mkdir -p /opt/blagovest-telegram-bot
+            fi
+
+            cd /opt/blagovest-telegram-bot
+
+            # Инициализировать git репозиторий если нужно
+            if [ ! -d ".git" ]; then
+              echo "🔧 Initializing git repository..."
+              git init
+              git remote add origin https://github.com/${{ github.repository }}.git
+            fi
+
+            # Обновить origin URL на случай если он изменился
+            git remote set-url origin https://github.com/${{ github.repository }}.git
+
+            # Сохранить config.py если существует
+            if [ -f "config.py" ]; then
+              echo "💾 Preserving config.py..."
+              cp config.py /tmp/config.py.backup
+            fi
+
+            # Сохранить базу данных если существует
+            if [ -f "bot_data.db" ]; then
+              echo "💾 Preserving bot_data.db..."
+              cp bot_data.db /tmp/bot_data.db.backup
+            fi
+
+            # Pull latest code
+            echo "📥 Pulling latest code from main branch..."
+            git fetch origin main
+            git reset --hard origin/main
+
+            # Восстановить config.py
+            if [ -f "/tmp/config.py.backup" ]; then
+              echo "♻️  Restoring config.py..."
+              cp /tmp/config.py.backup config.py
+              rm /tmp/config.py.backup
+            else
+              echo "⚠️  Warning: config.py not found. Please create it manually."
+            fi
+
+            # Восстановить базу данных
+            if [ -f "/tmp/bot_data.db.backup" ]; then
+              echo "♻️  Restoring bot_data.db..."
+              cp /tmp/bot_data.db.backup bot_data.db
+              rm /tmp/bot_data.db.backup
+            fi
+
+            # Создать директорию для логов если её нет
+            mkdir -p logs
+
+            # Проверить изменения в requirements.txt
+            if git diff HEAD@{1} HEAD --name-only 2>/dev/null | grep -q "requirements.txt"; then
+              echo "📦 Installing Python dependencies..."
+              pip3 install -r bot/requirements.txt --quiet || pip3 install -r requirements.txt --quiet
+            else
+              echo "⏭️  Skipping pip install (requirements.txt unchanged)"
+            fi
+
+            # Деплой WordPress плагина
+            echo "🔌 Deploying WordPress plugin..."
+            PLUGIN_DEST="/home/blagovest.net/public_html/wp-content/plugins/latepoint-telegram"
+
+            if [ -d "$PLUGIN_DEST" ]; then
+              rsync -av --delete \
+                --exclude='config.php' \
+                --exclude='.DS_Store' \
+                plugin/ \
+                "$PLUGIN_DEST/"
+              echo "✅ WordPress plugin deployed"
+            else
+              echo "⚠️  Warning: WordPress plugin directory not found at $PLUGIN_DEST"
+            fi
+
+            # Перезапустить бота
+            echo "🔄 Restarting Telegram bot service..."
+            systemctl restart telegram-bot-blagovest
+
+            # Проверить статус
+            echo "⏳ Waiting for service to start..."
+            sleep 3
+
+            if systemctl is-active --quiet telegram-bot-blagovest; then
+              echo "✅ Service is running"
+              systemctl status telegram-bot-blagovest --no-pager --lines=5
+            else
+              echo "❌ Service failed to start!"
+              systemctl status telegram-bot-blagovest --no-pager --lines=20
+              exit 1
+            fi
+
+            echo "=========================================="
+            echo "✅ Deployment completed successfully!"
+            echo "=========================================="
+
+      - name: Deployment Success Notification
+        if: success()
+        run: |
+          echo "=========================================="
+          echo "✅ LatePoint Telegram Integration deployed!"
+          echo "=========================================="
+          echo "🤖 Bot restarted on VPS"
+          echo "🔌 WordPress plugin updated"
+          echo "📦 Backup created"
+          echo "🌐 Server: ${{ secrets.VPS_HOST }}"
+          echo "📅 Time: $(date -u '+%Y-%m-%d %H:%M:%S UTC')"
+
+      - name: Deployment Failure Notification
+        if: failure()
+        run: |
+          echo "=========================================="
+          echo "❌ Deployment FAILED!"
+          echo "=========================================="
+          echo "Please check the logs above for details"
+          echo "You may need to:"
+          echo "  1. Check SSH connection and credentials"
+          echo "  2. Verify file paths on the server"
+          echo "  3. Check systemd service status"
+          echo "  4. Review bot logs on the server"

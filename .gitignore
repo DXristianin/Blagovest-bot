@@ -1,0 +1,274 @@
+###############################################################################
+# LatePoint Telegram Integration - Git Ignore Rules
+###############################################################################
+
+# ============================================================================
+# SENSITIVE FILES - НИКОГДА НЕ КОММИТИТЬ!
+# ============================================================================
+
+# Конфигурационные файлы с токенами и секретами
+bot/config.py
+config.py
+bot/.env
+.env
+*.secret
+
+# WordPress конфиги
+plugin/config.php
+
+# SSH ключи
+*.pem
+*.key
+id_rsa*
+id_ed25519*
+
+# ============================================================================
+# БАЗЫ ДАННЫХ
+# ============================================================================
+
+# SQLite
+*.db
+*.sqlite
+*.sqlite3
+bot/bot_data.db
+bot_data.db
+
+# Database backups
+*.sql
+*.dump
+
+# ============================================================================
+# ЛОГИ
+# ============================================================================
+
+# Все лог файлы
+logs/
+*.log
+bot/logs/
+*.log.*
+
+# ============================================================================
+# PYTHON
+# ============================================================================
+
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Distribution / packaging
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+pip-wheel-metadata/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+env.bak/
+venv.bak/
+
+# PyInstaller
+*.manifest
+*.spec
+
+# Unit test / coverage reports
+htmlcov/
+.tox/
+.nox/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+*.py,cover
+.hypothesis/
+.pytest_cache/
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# pyenv
+.python-version
+
+# pipenv
+Pipfile.lock
+
+# PEP 582
+__pypackages__/
+
+# Celery
+celerybeat-schedule
+celerybeat.pid
+
+# SageMath parsed files
+*.sage.py
+
+# Spyder project settings
+.spyderproject
+.spyproject
+
+# Rope project settings
+.ropeproject
+
+# mkdocs documentation
+/site
+
+# mypy
+.mypy_cache/
+.dmypy.json
+dmypy.json
+
+# Pyre type checker
+.pyre/
+
+# ============================================================================
+# PHP / WORDPRESS
+# ============================================================================
+
+# WordPress specific
+wp-config.php
+.htaccess
+
+# Composer
+vendor/
+composer.lock
+
+# ============================================================================
+# IDEs И РЕДАКТОРЫ
+# ============================================================================
+
+# VSCode
+.vscode/
+*.code-workspace
+.history/
+
+# PyCharm
+.idea/
+*.iml
+*.iws
+*.ipr
+
+# Sublime Text
+*.sublime-project
+*.sublime-workspace
+
+# Vim
+*.swp
+*.swo
+*~
+.vim/
+
+# Emacs
+*~
+\#*\#
+.\#*
+
+# ============================================================================
+# ОПЕРАЦИОННЫЕ СИСТЕМЫ
+# ============================================================================
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+Icon
+._*
+.DocumentRevisions-V100
+.fseventsd
+.Spotlight-V100
+.TemporaryItems
+.Trashes
+.VolumeIcon.icns
+.com.apple.timemachine.donotpresent
+.AppleDB
+.AppleDesktop
+Network Trash Folder
+Temporary Items
+.apdisk
+
+# Windows
+Thumbs.db
+Thumbs.db:encryptable
+ehthumbs.db
+ehthumbs_vista.db
+*.stackdump
+[Dd]esktop.ini
+$RECYCLE.BIN/
+*.cab
+*.msi
+*.msix
+*.msm
+*.msp
+*.lnk
+
+# Linux
+.directory
+.Trash-*
+.nfs*
+
+# ============================================================================
+# BACKUPS И TEMPORARY
+# ============================================================================
+
+*.backup
+*.bak
+*.tmp
+*.temp
+*~
+*.orig
+*.rej
+
+# ============================================================================
+# NODE_MODULES (если добавите JS инструменты)
+# ============================================================================
+
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.npm
+.yarn-integrity
+
+# ============================================================================
+# DEPLOYMENT
+# ============================================================================
+
+# Deploy scripts с конфиденциальной информацией
+deploy-secrets.sh
+.deploy_key
+
+# ============================================================================
+# РАЗНОЕ
+# ============================================================================
+
+# Archives
+*.zip
+*.tar.gz
+*.rar
+*.7z
+
+# Certificate files
+*.crt
+*.cer
+*.p12
+*.pfx
