@@ -55,10 +55,25 @@ class NotificationHandler:
 
     async def handle_booking_created(self, data: dict):
         """Обработка создания бронирования"""
+        # Валидация обязательных полей
+        required_fields = ['booking_id', 'agent', 'customer', 'service']
+        missing_fields = [field for field in required_fields if field not in data]
+
+        if missing_fields:
+            logger.error(f"Missing required fields in booking_created: {missing_fields}")
+            return
+
+        # Дополнительная валидация вложенных полей
+        if not isinstance(data.get('agent'), dict) or not isinstance(data.get('customer'), dict):
+            logger.error("Invalid data structure: agent and customer must be dictionaries")
+            return
+
+        sent_telegram_ids = set()
+
         # Отправка уведомлений всем привязанным Telegram аккаунтам агента
         agent_id = data.get('agent_id')
         if agent_id:
-            await self.send_to_agent_bindings(
+            sent_telegram_ids = await self.send_to_agent_bindings(
                 agent_id=agent_id,
                 notification_type='booking_created',
                 booking_id=data['booking_id'],
@@ -66,9 +81,9 @@ class NotificationHandler:
                 keyboard_creator=lambda: self.create_booking_keyboard(data['booking_id'], user_type='agent')
             )
 
-        # Fallback: старая система с telegram_chat_id
+        # Fallback: старая система с telegram_chat_id (только если еще не отправили)
         agent_chat_id = data['agent'].get('telegram_chat_id')
-        if agent_chat_id:
+        if agent_chat_id and int(agent_chat_id) not in sent_telegram_ids:
             # Проверка настроек
             settings = await db.get_settings(int(agent_chat_id))
             if settings and settings.notify_on_create:
@@ -134,6 +149,14 @@ class NotificationHandler:
 
     async def handle_booking_updated(self, data: dict):
         """Обработка обновления бронирования"""
+        # Валидация обязательных полей
+        required_fields = ['booking_id', 'agent', 'customer', 'service']
+        missing_fields = [field for field in required_fields if field not in data]
+
+        if missing_fields:
+            logger.error(f"Missing required fields in booking_updated: {missing_fields}")
+            return
+
         changes = data.get('changes', {})
 
         if not changes:
@@ -185,6 +208,14 @@ class NotificationHandler:
 
     async def handle_booking_status_changed(self, data: dict):
         """Обработка изменения статуса бронирования"""
+        # Валидация обязательных полей
+        required_fields = ['booking_id', 'agent', 'customer', 'service', 'old_status', 'new_status']
+        missing_fields = [field for field in required_fields if field not in data]
+
+        if missing_fields:
+            logger.error(f"Missing required fields in booking_status_changed: {missing_fields}")
+            return
+
         old_status = data.get('old_status')
         new_status = data.get('new_status')
 
@@ -394,9 +425,14 @@ class NotificationHandler:
             booking_id: ID бронирования
             message_formatter: Функция для форматирования сообщения
             keyboard_creator: Функция для создания клавиатуры (опционально)
+
+        Returns:
+            set: Множество telegram_id, которым были отправлены уведомления
         """
         from database.models import AgentBinding
         from sqlalchemy import select
+
+        sent_telegram_ids = set()
 
         try:
             # Получить все привязки для данного агента
@@ -408,7 +444,7 @@ class NotificationHandler:
 
             if not bindings:
                 logger.info(f"No telegram bindings found for agent_id={agent_id}")
-                return
+                return sent_telegram_ids
 
             logger.info(f"Found {len(bindings)} telegram bindings for agent_id={agent_id}")
 
@@ -434,6 +470,7 @@ class NotificationHandler:
                         success=True
                     )
 
+                    sent_telegram_ids.add(telegram_id)
                     logger.info(f"Notification sent to telegram_id={telegram_id} for agent_id={agent_id}")
 
                 except Exception as e:
@@ -448,3 +485,5 @@ class NotificationHandler:
 
         except Exception as e:
             logger.error(f"Error in send_to_agent_bindings: {e}")
+
+        return sent_telegram_ids

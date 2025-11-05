@@ -2,12 +2,16 @@
 Сервис для взаимодействия с WordPress API
 """
 
+import asyncio
 import logging
 import aiohttp
 from typing import Dict, List, Optional
 import config
 
 logger = logging.getLogger(__name__)
+
+# Константа для таймаута запросов
+REQUEST_TIMEOUT = aiohttp.ClientTimeout(total=config.HTTP_TIMEOUT)
 
 
 class WordPressAPI:
@@ -28,6 +32,43 @@ class WordPressAPI:
         if self.session:
             await self.session.close()
             logger.info("WordPress API session closed")
+
+    async def _handle_response(self, response: aiohttp.ClientResponse, operation: str) -> Dict:
+        """
+        Обработка HTTP ответа с проверкой статус кодов
+
+        Args:
+            response: HTTP ответ от aiohttp
+            operation: Название операции для логирования
+
+        Returns:
+            Dict с результатом
+        """
+        try:
+            # Проверка статуса
+            if response.status >= 500:
+                logger.error(f"{operation}: Server error {response.status}")
+                return {'success': False, 'message': f'Server error: {response.status}'}
+
+            if response.status >= 400:
+                logger.warning(f"{operation}: Client error {response.status}")
+                try:
+                    error_data = await response.json()
+                    return {'success': False, 'message': error_data.get('message', f'Client error: {response.status}')}
+                except:
+                    return {'success': False, 'message': f'Client error: {response.status}'}
+
+            # Парсинг JSON
+            try:
+                result = await response.json()
+                return result
+            except aiohttp.ContentTypeError:
+                logger.error(f"{operation}: Invalid JSON response")
+                return {'success': False, 'message': 'Invalid JSON response'}
+
+        except Exception as e:
+            logger.error(f"{operation}: Error handling response: {e}")
+            return {'success': False, 'message': str(e)}
 
     async def register_user(self, token: str, chat_id: int, username: str) -> Dict:
         """
@@ -51,27 +92,30 @@ class WordPressAPI:
         }
 
         try:
-            async with self.session.post(url, json=data) as response:
-                result = await response.json()
+            async with self.session.post(url, json=data, timeout=REQUEST_TIMEOUT) as response:
+                result = await self._handle_response(response, "User registration")
 
-                if response.status == 200 and result.get('success'):
+                if result.get('success'):
                     logger.info(f"User registered successfully: chat_id={chat_id}")
-                    return result
-                else:
-                    logger.error(f"Registration failed: {result.get('message', 'Unknown error')}")
-                    return {'success': False, 'message': result.get('message', 'Registration failed')}
 
+                return result
+
+        except asyncio.TimeoutError:
+            logger.error(f"Timeout registering user: chat_id={chat_id}")
+            return {'success': False, 'message': 'Request timeout'}
         except Exception as e:
             logger.error(f"Error registering user: {e}")
             return {'success': False, 'message': str(e)}
 
-    async def get_schedule(self, chat_id: int, period: str = 'today') -> Dict:
+    async def get_schedule(self, chat_id: int, period: str = None, date_from: str = None, date_to: str = None) -> Dict:
         """
         Получить расписание пользователя
 
         Args:
             chat_id: Telegram chat ID
-            period: 'today' или 'week'
+            period: 'today' или 'week' (опционально)
+            date_from: Начальная дата в формате YYYY-MM-DD (опционально)
+            date_to: Конечная дата в формате YYYY-MM-DD (опционально)
 
         Returns:
             Dict с расписанием
@@ -79,22 +123,27 @@ class WordPressAPI:
         await self.init_session()
 
         url = f"{self.base_url}/schedule"
-        params = {
-            'chat_id': str(chat_id),
-            'period': period
-        }
+        params = {'chat_id': str(chat_id)}
+
+        if period:
+            params['period'] = period
+        if date_from:
+            params['date_from'] = date_from
+        if date_to:
+            params['date_to'] = date_to
 
         try:
-            async with self.session.get(url, params=params) as response:
-                result = await response.json()
+            async with self.session.get(url, params=params, timeout=REQUEST_TIMEOUT) as response:
+                result = await self._handle_response(response, "Get schedule")
 
-                if response.status == 200 and result.get('success'):
-                    logger.info(f"Schedule fetched for chat_id={chat_id}, period={period}")
-                    return result
-                else:
-                    logger.error(f"Failed to fetch schedule: {result.get('message', 'Unknown error')}")
-                    return {'success': False, 'message': result.get('message', 'Failed to fetch schedule')}
+                if result.get('success'):
+                    logger.info(f"Schedule fetched for chat_id={chat_id}")
 
+                return result
+
+        except asyncio.TimeoutError:
+            logger.error(f"Timeout fetching schedule for chat_id={chat_id}")
+            return {'success': False, 'message': 'Request timeout'}
         except Exception as e:
             logger.error(f"Error fetching schedule: {e}")
             return {'success': False, 'message': str(e)}
@@ -116,16 +165,17 @@ class WordPressAPI:
         params = {'chat_id': str(chat_id)}
 
         try:
-            async with self.session.get(url, params=params) as response:
-                result = await response.json()
+            async with self.session.get(url, params=params, timeout=REQUEST_TIMEOUT) as response:
+                result = await self._handle_response(response, f"Get booking {booking_id}")
 
-                if response.status == 200 and result.get('success'):
+                if result.get('success'):
                     logger.info(f"Booking {booking_id} fetched for chat_id={chat_id}")
-                    return result
-                else:
-                    logger.error(f"Failed to fetch booking: {result.get('message', 'Unknown error')}")
-                    return {'success': False, 'message': result.get('message', 'Failed to fetch booking')}
 
+                return result
+
+        except asyncio.TimeoutError:
+            logger.error(f"Timeout fetching booking {booking_id}")
+            return {'success': False, 'message': 'Request timeout'}
         except Exception as e:
             logger.error(f"Error fetching booking: {e}")
             return {'success': False, 'message': str(e)}
@@ -151,16 +201,17 @@ class WordPressAPI:
         }
 
         try:
-            async with self.session.post(url, json=data) as response:
-                result = await response.json()
+            async with self.session.post(url, json=data, timeout=REQUEST_TIMEOUT) as response:
+                result = await self._handle_response(response, f"Update booking {booking_id} status")
 
-                if response.status == 200 and result.get('success'):
+                if result.get('success'):
                     logger.info(f"Booking {booking_id} status updated to {new_status}")
-                    return result
-                else:
-                    logger.error(f"Failed to update booking status: {result.get('message', 'Unknown error')}")
-                    return {'success': False, 'message': result.get('message', 'Failed to update status')}
 
+                return result
+
+        except asyncio.TimeoutError:
+            logger.error(f"Timeout updating booking {booking_id} status")
+            return {'success': False, 'message': 'Request timeout'}
         except Exception as e:
             logger.error(f"Error updating booking status: {e}")
             return {'success': False, 'message': str(e)}
@@ -181,16 +232,17 @@ class WordPressAPI:
         params = {'chat_id': str(chat_id)}
 
         try:
-            async with self.session.get(url, params=params) as response:
-                result = await response.json()
+            async with self.session.get(url, params=params, timeout=REQUEST_TIMEOUT) as response:
+                result = await self._handle_response(response, "Get user info")
 
-                if response.status == 200 and result.get('success'):
+                if result.get('success'):
                     logger.info(f"User info fetched for chat_id={chat_id}")
-                    return result
-                else:
-                    logger.error(f"Failed to fetch user info: {result.get('message', 'Unknown error')}")
-                    return {'success': False, 'message': result.get('message', 'User not found')}
 
+                return result
+
+        except asyncio.TimeoutError:
+            logger.error(f"Timeout fetching user info for chat_id={chat_id}")
+            return {'success': False, 'message': 'Request timeout'}
         except Exception as e:
             logger.error(f"Error fetching user info: {e}")
             return {'success': False, 'message': str(e)}

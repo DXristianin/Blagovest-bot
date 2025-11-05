@@ -276,7 +276,8 @@ class LatePoint_Telegram_Database {
      * @return string Bot deep link
      */
     private function get_bot_link($token) {
-        return 'https://t.me/blagovestnet_bot?start=' . $token;
+        $bot_username = get_option('latepoint_telegram_bot_username', 'blagovestnet_bot');
+        return 'https://t.me/' . $bot_username . '?start=' . $token;
     }
 
     /**
