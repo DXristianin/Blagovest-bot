@@ -12,6 +12,7 @@ import config
 from database.db import db
 from services.wordpress_api import wp_api
 from utils.formatters import format_datetime_with_timezone
+from utils.timezones import get_timezone_short_name
 
 logger = logging.getLogger(__name__)
 
@@ -76,6 +77,26 @@ async def cmd_start(message: Message):
                 f"Вы подключены к агенту: {agent_token_result['agent_name']}\n\n"
                 "Теперь вы будете получать уведомления о новых записях к этому преподавателю."
             )
+
+            # Предложить выбрать часовой пояс
+            from utils.timezones import TIMEZONES
+            builder = InlineKeyboardBuilder()
+
+            for region_key, region_data in TIMEZONES.items():
+                builder.button(
+                    text=region_data['name'],
+                    callback_data=f"timezone_region_{region_key}"
+                )
+
+            builder.adjust(1)
+
+            timezone_message = """🌍 <b>Выберите ваш часовой пояс</b>
+
+Это поможет отображать время уроков и уведомлений в вашем местном времени.
+Вы всегда сможете изменить его в настройках (/settings)."""
+
+            await message.answer(timezone_message, reply_markup=builder.as_markup(), parse_mode='HTML')
+
         elif 'expired' in agent_token_result.get('message', '').lower():
             await message.answer(
                 "❌ Токен истёк.\n\n"
@@ -127,6 +148,25 @@ async def cmd_start(message: Message):
             user_type=user_type_text
         )
         await message.answer(message_text)
+
+        # Предложить выбрать часовой пояс
+        from utils.timezones import TIMEZONES
+        builder = InlineKeyboardBuilder()
+
+        for region_key, region_data in TIMEZONES.items():
+            builder.button(
+                text=region_data['name'],
+                callback_data=f"timezone_region_{region_key}"
+            )
+
+        builder.adjust(1)
+
+        timezone_message = """🌍 <b>Выберите ваш часовой пояс</b>
+
+Это поможет отображать время уроков и уведомлений в вашем местном времени.
+Вы всегда сможете изменить его в настройках (/settings)."""
+
+        await message.answer(timezone_message, reply_markup=builder.as_markup(), parse_mode='HTML')
 
     elif 'expired' in result.get('message', '').lower():
         await message.answer(config.MESSAGES['token_expired'])
@@ -336,6 +376,10 @@ async def cmd_settings(message: Message):
         await message.answer("❌ Настройки не найдены.")
         return
 
+    # Получение текущего часового пояса пользователя
+    user_timezone = user.timezone if user and user.timezone else config.TIMEZONE
+    timezone_name = get_timezone_short_name(user_timezone)
+
     # Формирование клавиатуры с inline кнопками
     builder = InlineKeyboardBuilder()
 
@@ -371,6 +415,12 @@ async def cmd_settings(message: Message):
     builder.button(
         text=f"⏰ За {settings.reminder_minutes_before} мин до начала",
         callback_data=f"setting_reminder_time"
+    )
+
+    # Часовой пояс
+    builder.button(
+        text=f"🌍 Часовой пояс: {timezone_name}",
+        callback_data="setting_timezone"
     )
 
     builder.adjust(1)  # По одной кнопке в ряд

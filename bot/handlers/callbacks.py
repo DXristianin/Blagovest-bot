@@ -10,6 +10,8 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 from database.db import db
 from services.wordpress_api import wp_api
 from utils.formatters import format_datetime_with_timezone
+from utils.timezones import TIMEZONES, get_timezone_short_name
+import config
 
 logger = logging.getLogger(__name__)
 
@@ -49,8 +51,9 @@ async def callback_toggle_setting(callback: CallbackQuery):
     await db.update_settings(callback.message.chat.id, **{db_field: new_value})
 
     # Обновление клавиатуры
+    user = await db.get_user_by_chat_id(callback.message.chat.id)
     settings = await db.get_settings(callback.message.chat.id)
-    builder = create_settings_keyboard(settings)
+    builder = create_settings_keyboard(settings, user)
 
     await callback.message.edit_reply_markup(reply_markup=builder.as_markup())
     await callback.answer("✅ Настройка обновлена")
@@ -101,8 +104,9 @@ async def callback_set_reminder_time(callback: CallbackQuery):
     await db.update_settings(callback.message.chat.id, reminder_minutes_before=minutes)
 
     # Возврат к настройкам
+    user = await db.get_user_by_chat_id(callback.message.chat.id)
     settings = await db.get_settings(callback.message.chat.id)
-    builder = create_settings_keyboard(settings)
+    builder = create_settings_keyboard(settings, user)
 
     message_text = """⚙️ <b>Настройки уведомлений</b>
 
@@ -115,8 +119,9 @@ async def callback_set_reminder_time(callback: CallbackQuery):
 @router.callback_query(F.data == 'back_to_settings')
 async def callback_back_to_settings(callback: CallbackQuery):
     """Возврат к настройкам"""
+    user = await db.get_user_by_chat_id(callback.message.chat.id)
     settings = await db.get_settings(callback.message.chat.id)
-    builder = create_settings_keyboard(settings)
+    builder = create_settings_keyboard(settings, user)
 
     message_text = """⚙️ <b>Настройки уведомлений</b>
 
@@ -124,6 +129,90 @@ async def callback_back_to_settings(callback: CallbackQuery):
 
     await callback.message.edit_text(message_text, reply_markup=builder.as_markup(), parse_mode='HTML')
     await callback.answer()
+
+
+@router.callback_query(F.data == 'setting_timezone')
+async def callback_timezone(callback: CallbackQuery):
+    """Выбор часового пояса - показать регионы"""
+    builder = InlineKeyboardBuilder()
+
+    # Добавляем кнопки для каждого региона
+    for region_key, region_data in TIMEZONES.items():
+        builder.button(
+            text=region_data['name'],
+            callback_data=f"timezone_region_{region_key}"
+        )
+
+    builder.button(text="« Назад", callback_data="back_to_settings")
+    builder.adjust(1)
+
+    message_text = "🌍 <b>Выберите регион:</b>"
+
+    await callback.message.edit_text(message_text, reply_markup=builder.as_markup(), parse_mode='HTML')
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith('timezone_region_'))
+async def callback_timezone_region(callback: CallbackQuery):
+    """Показать города в выбранном регионе"""
+    region_key = callback.data.replace('timezone_region_', '')
+
+    if region_key not in TIMEZONES:
+        await callback.answer("Регион не найден", show_alert=True)
+        return
+
+    region_data = TIMEZONES[region_key]
+    builder = InlineKeyboardBuilder()
+
+    # Добавляем кнопки для каждого часового пояса в регионе
+    for tz_key, tz_name in region_data['zones'].items():
+        builder.button(
+            text=tz_name,
+            callback_data=f"set_timezone_{tz_key}"
+        )
+
+    builder.button(text="« Назад к регионам", callback_data="setting_timezone")
+    builder.adjust(1)
+
+    message_text = f"🌍 <b>{region_data['name']}</b>\n\nВыберите часовой пояс:"
+
+    await callback.message.edit_text(message_text, reply_markup=builder.as_markup(), parse_mode='HTML')
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith('set_timezone_'))
+async def callback_set_timezone(callback: CallbackQuery):
+    """Установить выбранный часовой пояс"""
+    timezone = callback.data.replace('set_timezone_', '')
+
+    # Обновление часового пояса пользователя (обрабатывает и users, и agent_bindings)
+    await db.update_user_timezone(callback.message.chat.id, timezone)
+
+    timezone_name = get_timezone_short_name(timezone)
+
+    # Проверяем, есть ли у пользователя настройки (значит это полноценный пользователь)
+    settings = await db.get_settings(callback.message.chat.id)
+
+    if settings:
+        # Это полноценный пользователь - возврат к настройкам
+        user = await db.get_user_by_chat_id(callback.message.chat.id)
+        builder = create_settings_keyboard(settings, user)
+
+        message_text = """⚙️ <b>Настройки уведомлений</b>
+
+Выберите типы уведомлений, которые хотите получать:"""
+
+        await callback.message.edit_text(message_text, reply_markup=builder.as_markup(), parse_mode='HTML')
+        await callback.answer(f"✅ Часовой пояс изменён на {timezone_name}")
+    else:
+        # Это пользователь привязанный только через agent_binding
+        await callback.message.edit_text(
+            f"✅ <b>Часовой пояс установлен!</b>\n\n"
+            f"Ваш часовой пояс: {timezone_name}\n\n"
+            f"Теперь все уведомления будут отображаться в вашем местном времени.",
+            parse_mode='HTML'
+        )
+        await callback.answer(f"✅ Часовой пояс установлен: {timezone_name}")
 
 
 @router.callback_query(F.data.startswith('booking_'))
@@ -188,7 +277,7 @@ async def callback_booking_action(callback: CallbackQuery):
             await callback.answer("❌ Не удалось отменить бронирование", show_alert=True)
 
 
-def create_settings_keyboard(settings):
+def create_settings_keyboard(settings, user=None, user_timezone=None):
     """Создание клавиатуры настроек"""
     builder = InlineKeyboardBuilder()
 
@@ -224,6 +313,15 @@ def create_settings_keyboard(settings):
     builder.button(
         text=f"⏰ За {settings.reminder_minutes_before} мин до начала",
         callback_data="setting_reminder_time"
+    )
+
+    # Часовой пояс
+    if not user_timezone:
+        user_timezone = user.timezone if user and user.timezone else config.TIMEZONE
+    timezone_name = get_timezone_short_name(user_timezone)
+    builder.button(
+        text=f"🌍 Часовой пояс: {timezone_name}",
+        callback_data="setting_timezone"
     )
 
     builder.adjust(1)
