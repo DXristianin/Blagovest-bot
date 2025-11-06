@@ -94,6 +94,8 @@ jobs:
             if [ -f "/tmp/config.py.backup" ]; then
               echo "♻️  Restoring config.py..."
               cp /tmp/config.py.backup config.py
+              # Также скопировать в bot/ директорию для новой структуры
+              cp /tmp/config.py.backup bot/config.py
               rm /tmp/config.py.backup
             else
               echo "⚠️  Warning: config.py not found. Please create it manually."
@@ -115,6 +117,12 @@ jobs:
               pip3 install -r bot/requirements.txt --quiet || pip3 install -r requirements.txt --quiet
             else
               echo "⏭️  Skipping pip install (requirements.txt unchanged)"
+            fi
+
+            # Выполнить миграции БД если нужно
+            if [ -f "scripts/migrate_timezone.py" ]; then
+              echo "🔄 Running database migrations..."
+              python3 scripts/migrate_timezone.py || echo "⚠️  Migration script not critical, continuing..."
             fi
 
             # Деплой WordPress плагина
