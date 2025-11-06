@@ -73,8 +73,11 @@ jobs:
             # Обновить origin URL на случай если он изменился
             git remote set-url origin https://github.com/${{ github.repository }}.git
 
-            # Сохранить config.py если существует
-            if [ -f "config.py" ]; then
+            # Сохранить config.py (приоритет: bot/config.py, затем корневой config.py)
+            if [ -f "bot/config.py" ]; then
+              echo "💾 Preserving bot/config.py..."
+              cp bot/config.py /tmp/config.py.backup
+            elif [ -f "config.py" ]; then
               echo "💾 Preserving config.py..."
               cp config.py /tmp/config.py.backup
             fi
@@ -90,13 +93,15 @@ jobs:
             git fetch origin main
             git reset --hard origin/main
 
-            # Восстановить config.py
+            # Восстановить config.py в обе директории
             if [ -f "/tmp/config.py.backup" ]; then
-              echo "♻️  Restoring config.py..."
-              cp /tmp/config.py.backup config.py
-              # Также скопировать в bot/ директорию для новой структуры
+              echo "♻️  Restoring config.py to both locations..."
+              # Копировать в bot/ (приоритет)
               cp /tmp/config.py.backup bot/config.py
+              # Также в корень для совместимости
+              cp /tmp/config.py.backup config.py
               rm /tmp/config.py.backup
+              echo "✅ Config restored: bot/config.py and config.py"
             else
               echo "⚠️  Warning: config.py not found. Please create it manually."
             fi
