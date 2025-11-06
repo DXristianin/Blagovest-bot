@@ -9,6 +9,7 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 from database.db import db
 from services.wordpress_api import wp_api
+from utils.formatters import format_datetime_with_timezone
 
 logger = logging.getLogger(__name__)
 
@@ -147,7 +148,9 @@ async def callback_booking_action(callback: CallbackQuery):
             return
 
         booking = result['booking']
-        details_text = format_booking_details(booking, user.user_type)
+        # Получение timezone пользователя
+        user_timezone = user.timezone if user else None
+        details_text = format_booking_details(booking, user.user_type, user_timezone)
 
         await callback.answer()
         await callback.message.answer(details_text, parse_mode='HTML')
@@ -227,8 +230,21 @@ def create_settings_keyboard(settings):
     return builder
 
 
-def format_booking_details(booking: dict, user_type: str) -> str:
+def format_booking_details(booking: dict, user_type: str, user_timezone: str = None) -> str:
     """Форматирование деталей бронирования"""
+    # Конвертация времени в часовой пояс пользователя
+    start_date = booking['start_date']
+    start_time = booking['start_time']
+    end_time = booking['end_time']
+
+    if user_timezone:
+        start_date, start_time = format_datetime_with_timezone(
+            booking['start_date'], booking['start_time'], user_timezone
+        )
+        _, end_time = format_datetime_with_timezone(
+            booking['start_date'], booking['end_time'], user_timezone
+        )
+
     if user_type == 'agent':
         customer = booking['customer']
         text = f"""📋 <b>Детали бронирования</b>
@@ -243,8 +259,8 @@ def format_booking_details(booking: dict, user_type: str) -> str:
 
 🎵 <b>Урок:</b>
 Инструмент: {booking['service']['name']}
-📅 Дата: {booking['start_date']}
-🕐 Время: {booking['start_time']} - {booking['end_time']}
+📅 Дата: {start_date}
+🕐 Время: {start_time} - {end_time}
 ⏱ Длительность: {booking['duration']} мин
 """
     else:
@@ -261,8 +277,8 @@ def format_booking_details(booking: dict, user_type: str) -> str:
 
 🎵 <b>Урок:</b>
 Инструмент: {booking['service']['name']}
-📅 Дата: {booking['start_date']}
-🕐 Время: {booking['start_time']} - {booking['end_time']}
+📅 Дата: {start_date}
+🕐 Время: {start_time} - {end_time}
 ⏱ Длительность: {booking['duration']} мин
 """
 

@@ -12,6 +12,7 @@ from aiogram import Bot
 import config
 from database.db import db
 from services.wordpress_api import wp_api
+from utils.formatters import format_datetime_with_timezone
 
 logger = logging.getLogger(__name__)
 
@@ -136,11 +137,14 @@ class ReminderScheduler:
             booking: Данные бронирования
         """
         try:
+            # Получение timezone пользователя
+            user_timezone = user.timezone if user else None
+
             # Формирование сообщения в зависимости от типа пользователя
             if user.user_type == 'agent':
-                message = self.format_reminder_for_agent(booking)
+                message = self.format_reminder_for_agent(booking, user_timezone)
             else:
-                message = self.format_reminder_for_customer(booking)
+                message = self.format_reminder_for_customer(booking, user_timezone)
 
             # Отправка сообщения
             await self.bot.send_message(user.chat_id, message, parse_mode='HTML')
@@ -165,18 +169,31 @@ class ReminderScheduler:
                 error_message=str(e)
             )
 
-    def format_reminder_for_agent(self, booking: dict) -> str:
+    def format_reminder_for_agent(self, booking: dict, user_timezone: str = None) -> str:
         """Форматирование напоминания для учителя"""
         customer = booking['customer']
         service = booking['service']
+
+        # Конвертация времени в часовой пояс пользователя
+        start_date = booking['start_date']
+        start_time = booking['start_time']
+        end_time = booking['end_time']
+
+        if user_timezone:
+            start_date, start_time = format_datetime_with_timezone(
+                booking['start_date'], booking['start_time'], user_timezone
+            )
+            _, end_time = format_datetime_with_timezone(
+                booking['start_date'], booking['end_time'], user_timezone
+            )
 
         message = f"""⏰ <b>Напоминание о предстоящем уроке!</b>
 
 👤 Ученик: {customer['name']}
 🎵 Инструмент: {service['name']}
 
-📅 Дата: {booking['start_date']}
-🕐 Время: {booking['start_time']} - {booking['end_time']}
+📅 Дата: {start_date}
+🕐 Время: {start_time} - {end_time}
 
 📧 Email: {customer['email']}
 📱 Телефон: {customer['phone']}
@@ -187,18 +204,31 @@ class ReminderScheduler:
 
         return message
 
-    def format_reminder_for_customer(self, booking: dict) -> str:
+    def format_reminder_for_customer(self, booking: dict, user_timezone: str = None) -> str:
         """Форматирование напоминания для ученика"""
         agent = booking['agent']
         service = booking['service']
+
+        # Конвертация времени в часовой пояс пользователя
+        start_date = booking['start_date']
+        start_time = booking['start_time']
+        end_time = booking['end_time']
+
+        if user_timezone:
+            start_date, start_time = format_datetime_with_timezone(
+                booking['start_date'], booking['start_time'], user_timezone
+            )
+            _, end_time = format_datetime_with_timezone(
+                booking['start_date'], booking['end_time'], user_timezone
+            )
 
         message = f"""⏰ <b>Напоминание о предстоящем уроке!</b>
 
 👨‍🏫 Учитель: {agent['name']}
 🎵 Инструмент: {service['name']}
 
-📅 Дата: {booking['start_date']}
-🕐 Время: {booking['start_time']} - {booking['end_time']}
+📅 Дата: {start_date}
+🕐 Время: {start_time} - {end_time}
 """
 
         if booking.get('google_meet_url'):
