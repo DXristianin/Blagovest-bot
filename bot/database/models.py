@@ -21,6 +21,7 @@ class User(Base):
     latepoint_id = Column(Integer, nullable=False)
     name = Column(String(255), nullable=False)
     email = Column(String(255), nullable=False)
+    timezone = Column(String(50), nullable=True, default='Europe/Moscow')  # Часовой пояс пользователя
     registered_at = Column(DateTime, default=datetime.utcnow)
 
     def __repr__(self):
@@ -98,6 +99,7 @@ class AgentBinding(Base):
     telegram_username = Column(String(255), nullable=True)
     telegram_first_name = Column(String(255), nullable=True)
     telegram_last_name = Column(String(255), nullable=True)
+    timezone = Column(String(50), nullable=True, default='Europe/Moscow')  # Часовой пояс пользователя
     created_at = Column(DateTime, default=datetime.utcnow)
 
     def __repr__(self):

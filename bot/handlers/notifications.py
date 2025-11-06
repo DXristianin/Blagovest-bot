@@ -10,6 +10,7 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 import config
 from database.db import db
+from utils.formatters import format_datetime_with_timezone
 
 logger = logging.getLogger(__name__)
 
@@ -77,8 +78,8 @@ class NotificationHandler:
                 agent_id=agent_id,
                 notification_type='booking_created',
                 booking_id=data['booking_id'],
-                message_formatter=lambda: self.format_booking_created_for_agent(data),
-                keyboard_creator=lambda: self.create_booking_keyboard(data['booking_id'], user_type='agent')
+                message_formatter=lambda tz=None: self.format_booking_created_for_agent(data, tz),
+                keyboard_creator=lambda: self.create_booking_keyboard(data['booking_id'], user_type='agent', include_actions=False)
             )
 
         # Fallback: старая система с telegram_chat_id (только если еще не отправили)
@@ -87,8 +88,12 @@ class NotificationHandler:
             # Проверка настроек
             settings = await db.get_settings(int(agent_chat_id))
             if settings and settings.notify_on_create:
-                message = self.format_booking_created_for_agent(data)
-                keyboard = self.create_booking_keyboard(data['booking_id'], user_type='agent')
+                # Получение timezone пользователя
+                user = await db.get_user_by_chat_id(int(agent_chat_id))
+                user_timezone = user.timezone if user else None
+
+                message = self.format_booking_created_for_agent(data, user_timezone)
+                keyboard = self.create_booking_keyboard(data['booking_id'], user_type='agent', include_actions=False)
 
                 try:
                     await self.bot.send_message(
@@ -120,8 +125,12 @@ class NotificationHandler:
             # Проверка настроек
             settings = await db.get_settings(int(customer_chat_id))
             if settings and settings.notify_on_create:
-                message = self.format_booking_created_for_customer(data)
-                keyboard = self.create_booking_keyboard(data['booking_id'], user_type='customer')
+                # Получение timezone пользователя
+                user = await db.get_user_by_chat_id(int(customer_chat_id))
+                user_timezone = user.timezone if user else None
+
+                message = self.format_booking_created_for_customer(data, user_timezone)
+                keyboard = self.create_booking_keyboard(data['booking_id'], user_type='customer', include_actions=False)
 
                 try:
                     await self.bot.send_message(
@@ -167,7 +176,11 @@ class NotificationHandler:
         if agent_chat_id:
             settings = await db.get_settings(int(agent_chat_id))
             if settings and settings.notify_on_update:
-                message = self.format_booking_updated_for_agent(data, changes)
+                # Получение timezone пользователя
+                user = await db.get_user_by_chat_id(int(agent_chat_id))
+                user_timezone = user.timezone if user else None
+
+                message = self.format_booking_updated_for_agent(data, changes, user_timezone)
 
                 try:
                     await self.bot.send_message(
@@ -189,7 +202,11 @@ class NotificationHandler:
         if customer_chat_id:
             settings = await db.get_settings(int(customer_chat_id))
             if settings and settings.notify_on_update:
-                message = self.format_booking_updated_for_customer(data, changes)
+                # Получение timezone пользователя
+                user = await db.get_user_by_chat_id(int(customer_chat_id))
+                user_timezone = user.timezone if user else None
+
+                message = self.format_booking_updated_for_customer(data, changes, user_timezone)
 
                 try:
                     await self.bot.send_message(
@@ -232,7 +249,11 @@ class NotificationHandler:
                 should_notify = True
 
             if should_notify:
-                message = self.format_status_changed_for_agent(data, old_status, new_status)
+                # Получение timezone пользователя
+                user = await db.get_user_by_chat_id(int(agent_chat_id))
+                user_timezone = user.timezone if user else None
+
+                message = self.format_status_changed_for_agent(data, old_status, new_status, user_timezone)
 
                 try:
                     await self.bot.send_message(
@@ -255,7 +276,11 @@ class NotificationHandler:
                 should_notify = True
 
             if should_notify:
-                message = self.format_status_changed_for_customer(data, old_status, new_status)
+                # Получение timezone пользователя
+                user = await db.get_user_by_chat_id(int(customer_chat_id))
+                user_timezone = user.timezone if user else None
+
+                message = self.format_status_changed_for_customer(data, old_status, new_status, user_timezone)
 
                 try:
                     await self.bot.send_message(
@@ -266,10 +291,23 @@ class NotificationHandler:
                 except Exception as e:
                     logger.error(f"Error sending status notification to customer: {e}")
 
-    def format_booking_created_for_agent(self, data: dict) -> str:
+    def format_booking_created_for_agent(self, data: dict, user_timezone: str = None) -> str:
         """Форматирование уведомления о новом бронировании для учителя"""
         customer = data['customer']
         service = data['service']
+
+        # Конвертация времени в часовой пояс пользователя
+        start_date = data['start_date']
+        start_time = data['start_time']
+        end_time = data['end_time']
+
+        if user_timezone:
+            start_date, start_time = format_datetime_with_timezone(
+                data['start_date'], data['start_time'], user_timezone
+            )
+            _, end_time = format_datetime_with_timezone(
+                data['start_date'], data['end_time'], user_timezone
+            )
 
         message = f"""🎵 <b>Новый урок!</b>
 
@@ -278,12 +316,9 @@ class NotificationHandler:
 📱 Телефон: {customer['phone']}
 
 🎵 <b>Инструмент:</b> {service['name']}
-📅 <b>Дата:</b> {data['start_date']}
-🕐 <b>Время:</b> {data['start_time']} - {data['end_time']}
+📅 <b>Дата:</b> {start_date}
+🕐 <b>Время:</b> {start_time} - {end_time}
 """
-
-        if data['customer'].get('timezone'):
-            message += f"🌍 Часовой пояс ученика: {data['customer']['timezone']}\n"
 
         if data.get('google_meet_url'):
             message += f"\n🎥 <b>Google Meet:</b>\n{data['google_meet_url']}"
@@ -292,18 +327,31 @@ class NotificationHandler:
 
         return message
 
-    def format_booking_created_for_customer(self, data: dict) -> str:
+    def format_booking_created_for_customer(self, data: dict, user_timezone: str = None) -> str:
         """Форматирование уведомления о новом бронировании для ученика"""
         agent = data['agent']
         service = data['service']
+
+        # Конвертация времени в часовой пояс пользователя
+        start_date = data['start_date']
+        start_time = data['start_time']
+        end_time = data['end_time']
+
+        if user_timezone:
+            start_date, start_time = format_datetime_with_timezone(
+                data['start_date'], data['start_time'], user_timezone
+            )
+            _, end_time = format_datetime_with_timezone(
+                data['start_date'], data['end_time'], user_timezone
+            )
 
         message = f"""🎵 <b>Урок подтвержден!</b>
 
 👨‍🏫 <b>Учитель:</b> {agent['name']}
 🎵 <b>Инструмент:</b> {service['name']}
 
-📅 <b>Дата:</b> {data['start_date']}
-🕐 <b>Время:</b> {data['start_time']} - {data['end_time']}
+📅 <b>Дата:</b> {start_date}
+🕐 <b>Время:</b> {start_time} - {end_time}
 """
 
         if data.get('google_meet_url'):
@@ -313,7 +361,7 @@ class NotificationHandler:
 
         return message
 
-    def format_booking_updated_for_agent(self, data: dict, changes: dict) -> str:
+    def format_booking_updated_for_agent(self, data: dict, changes: dict, user_timezone: str = None) -> str:
         """Форматирование уведомления об изменении для учителя"""
         customer = data['customer']
 
@@ -326,14 +374,33 @@ class NotificationHandler:
 """
 
         if 'start_date' in changes:
-            message += f"📅 Дата: {changes['start_date']['old']} → {changes['start_date']['new']}\n"
+            old_date = changes['start_date']['old']
+            new_date = changes['start_date']['new']
+
+            if user_timezone:
+                # Конвертируем старую и новую даты
+                old_time = changes.get('start_time', {}).get('old', '00:00')
+                new_time = changes.get('start_time', {}).get('new', '00:00')
+                old_date, _ = format_datetime_with_timezone(old_date, old_time, user_timezone)
+                new_date, _ = format_datetime_with_timezone(new_date, new_time, user_timezone)
+
+            message += f"📅 Дата: {old_date} → {new_date}\n"
 
         if 'start_time' in changes:
-            message += f"🕐 Время начала: {changes['start_time']['old']} → {changes['start_time']['new']}\n"
+            old_time = changes['start_time']['old']
+            new_time = changes['start_time']['new']
+
+            if user_timezone:
+                # Используем текущую дату или дату из изменений
+                date_for_conversion = changes.get('start_date', {}).get('new', data.get('start_date', '2025-01-01'))
+                _, old_time = format_datetime_with_timezone(date_for_conversion, old_time, user_timezone)
+                _, new_time = format_datetime_with_timezone(date_for_conversion, new_time, user_timezone)
+
+            message += f"🕐 Время начала: {old_time} → {new_time}\n"
 
         return message
 
-    def format_booking_updated_for_customer(self, data: dict, changes: dict) -> str:
+    def format_booking_updated_for_customer(self, data: dict, changes: dict, user_timezone: str = None) -> str:
         """Форматирование уведомления об изменении для ученика"""
         agent = data['agent']
 
@@ -346,17 +413,36 @@ class NotificationHandler:
 """
 
         if 'start_date' in changes:
-            message += f"📅 Дата: {changes['start_date']['old']} → {changes['start_date']['new']}\n"
+            old_date = changes['start_date']['old']
+            new_date = changes['start_date']['new']
+
+            if user_timezone:
+                # Конвертируем старую и новую даты
+                old_time = changes.get('start_time', {}).get('old', '00:00')
+                new_time = changes.get('start_time', {}).get('new', '00:00')
+                old_date, _ = format_datetime_with_timezone(old_date, old_time, user_timezone)
+                new_date, _ = format_datetime_with_timezone(new_date, new_time, user_timezone)
+
+            message += f"📅 Дата: {old_date} → {new_date}\n"
 
         if 'start_time' in changes:
-            message += f"🕐 Время начала: {changes['start_time']['old']} → {changes['start_time']['new']}\n"
+            old_time = changes['start_time']['old']
+            new_time = changes['start_time']['new']
+
+            if user_timezone:
+                # Используем текущую дату или дату из изменений
+                date_for_conversion = changes.get('start_date', {}).get('new', data.get('start_date', '2025-01-01'))
+                _, old_time = format_datetime_with_timezone(date_for_conversion, old_time, user_timezone)
+                _, new_time = format_datetime_with_timezone(date_for_conversion, new_time, user_timezone)
+
+            message += f"🕐 Время начала: {old_time} → {new_time}\n"
 
         if data.get('google_meet_url'):
             message += f"\n🎥 <b>Ссылка на урок:</b>\n{data['google_meet_url']}"
 
         return message
 
-    def format_status_changed_for_agent(self, data: dict, old_status: str, new_status: str) -> str:
+    def format_status_changed_for_agent(self, data: dict, old_status: str, new_status: str, user_timezone: str = None) -> str:
         """Форматирование уведомления об изменении статуса для учителя"""
         customer = data['customer']
 
@@ -366,19 +452,28 @@ class NotificationHandler:
             'pending': '⏳',
         }
 
+        # Конвертация времени в часовой пояс пользователя
+        start_date = data['start_date']
+        start_time = data['start_time']
+
+        if user_timezone:
+            start_date, start_time = format_datetime_with_timezone(
+                data['start_date'], data['start_time'], user_timezone
+            )
+
         message = f"""{status_emoji.get(new_status, '📝')} <b>Статус бронирования изменен</b>
 
 👤 <b>Ученик:</b> {customer['name']}
 🎵 <b>Инструмент:</b> {data['service']['name']}
-📅 <b>Дата:</b> {data['start_date']}
-🕐 <b>Время:</b> {data['start_time']}
+📅 <b>Дата:</b> {start_date}
+🕐 <b>Время:</b> {start_time}
 
 <b>Статус:</b> {old_status} → {new_status}
 """
 
         return message
 
-    def format_status_changed_for_customer(self, data: dict, old_status: str, new_status: str) -> str:
+    def format_status_changed_for_customer(self, data: dict, old_status: str, new_status: str, user_timezone: str = None) -> str:
         """Форматирование уведомления об изменении статуса для ученика"""
         agent = data['agent']
 
@@ -388,28 +483,42 @@ class NotificationHandler:
             'pending': '⏳',
         }
 
+        # Конвертация времени в часовой пояс пользователя
+        start_date = data['start_date']
+        start_time = data['start_time']
+
+        if user_timezone:
+            start_date, start_time = format_datetime_with_timezone(
+                data['start_date'], data['start_time'], user_timezone
+            )
+
         message = f"""{status_emoji.get(new_status, '📝')} <b>Статус бронирования изменен</b>
 
 👨‍🏫 <b>Учитель:</b> {agent['name']}
 🎵 <b>Инструмент:</b> {data['service']['name']}
-📅 <b>Дата:</b> {data['start_date']}
-🕐 <b>Время:</b> {data['start_time']}
+📅 <b>Дата:</b> {start_date}
+🕐 <b>Время:</b> {start_time}
 
 <b>Статус:</b> {old_status} → {new_status}
 """
 
         return message
 
-    def create_booking_keyboard(self, booking_id: int, user_type: str):
-        """Создание клавиатуры для бронирования"""
+    def create_booking_keyboard(self, booking_id: int, user_type: str, include_actions: bool = True):
+        """
+        Создание клавиатуры для бронирования
+
+        Args:
+            booking_id: ID бронирования
+            user_type: Тип пользователя ('agent' или 'customer')
+            include_actions: Включать ли кнопки действий (подтвердить/отменить)
+        """
         builder = InlineKeyboardBuilder()
 
         builder.button(text="📋 Детали", callback_data=f"booking_details_{booking_id}")
 
-        if user_type == 'agent':
-            builder.button(text="✅ Подтвердить", callback_data=f"booking_approve_{booking_id}")
-
-        builder.button(text="❌ Отменить", callback_data=f"booking_cancel_{booking_id}")
+        # Кнопки действий больше не добавляются для новых бронирований
+        # согласно требованиям
 
         builder.adjust(1)
         return builder
@@ -453,7 +562,12 @@ class NotificationHandler:
                 telegram_id = binding.telegram_id
 
                 try:
-                    message = message_formatter()
+                    # Получение timezone пользователя
+                    user = await db.get_user_by_chat_id(telegram_id)
+                    user_timezone = user.timezone if user else None
+
+                    # Передаем timezone в message_formatter (если поддерживается)
+                    message = message_formatter(user_timezone) if callable(message_formatter) else message_formatter
                     keyboard = keyboard_creator() if keyboard_creator else None
 
                     await self.bot.send_message(

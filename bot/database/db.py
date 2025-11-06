@@ -137,6 +137,68 @@ class DatabaseManager:
             )
             return result.scalars().all()
 
+    async def update_user_timezone(self, chat_id: int, timezone: str) -> User | None:
+        """Обновить часовой пояс пользователя"""
+        from database.models import AgentBinding
+
+        async with self.async_session() as session:
+            # Сначала пробуем найти в таблице users
+            result = await session.execute(
+                select(User).where(User.chat_id == chat_id)
+            )
+            user = result.scalar_one_or_none()
+
+            if user:
+                user.timezone = timezone
+                await session.commit()
+                await session.refresh(user)
+                logger.info(f"Timezone updated for chat_id={chat_id} to {timezone}")
+                return user
+
+            # Если пользователя нет, пробуем найти в agent_bindings
+            result = await session.execute(
+                select(AgentBinding).where(AgentBinding.telegram_id == chat_id)
+            )
+            binding = result.scalar_one_or_none()
+
+            if binding:
+                binding.timezone = timezone
+                await session.commit()
+                await session.refresh(binding)
+                logger.info(f"Timezone updated for telegram_id={chat_id} (AgentBinding) to {timezone}")
+                # Возвращаем None, т.к. это не User объект
+                return None
+
+            logger.warning(f"User or binding not found for chat_id={chat_id}")
+            return None
+
+    async def get_user_timezone(self, chat_id: int) -> str | None:
+        """Получить часовой пояс пользователя из users или agent_bindings"""
+        from database.models import AgentBinding
+        import config
+
+        async with self.async_session() as session:
+            # Сначала пробуем найти в таблице users
+            result = await session.execute(
+                select(User).where(User.chat_id == chat_id)
+            )
+            user = result.scalar_one_or_none()
+
+            if user and user.timezone:
+                return user.timezone
+
+            # Если пользователя нет, пробуем найти в agent_bindings
+            result = await session.execute(
+                select(AgentBinding).where(AgentBinding.telegram_id == chat_id)
+            )
+            binding = result.scalar_one_or_none()
+
+            if binding and binding.timezone:
+                return binding.timezone
+
+            # Возвращаем дефолтный timezone из конфига
+            return config.TIMEZONE
+
     def get_session(self):
         """Получить новую сессию базы данных"""
         return self.async_session()

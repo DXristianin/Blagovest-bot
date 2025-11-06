@@ -11,6 +11,8 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 import config
 from database.db import db
 from services.wordpress_api import wp_api
+from utils.formatters import format_datetime_with_timezone
+from utils.timezones import get_timezone_short_name
 
 logger = logging.getLogger(__name__)
 
@@ -75,6 +77,26 @@ async def cmd_start(message: Message):
                 f"Вы подключены к агенту: {agent_token_result['agent_name']}\n\n"
                 "Теперь вы будете получать уведомления о новых записях к этому преподавателю."
             )
+
+            # Предложить выбрать часовой пояс
+            from utils.timezones import TIMEZONES
+            builder = InlineKeyboardBuilder()
+
+            for region_key, region_data in TIMEZONES.items():
+                builder.button(
+                    text=region_data['name'],
+                    callback_data=f"timezone_region_{region_key}"
+                )
+
+            builder.adjust(1)
+
+            timezone_message = """🌍 <b>Выберите ваш часовой пояс</b>
+
+Это поможет отображать время уроков и уведомлений в вашем местном времени.
+Вы всегда сможете изменить его в настройках (/settings)."""
+
+            await message.answer(timezone_message, reply_markup=builder.as_markup(), parse_mode='HTML')
+
         elif 'expired' in agent_token_result.get('message', '').lower():
             await message.answer(
                 "❌ Токен истёк.\n\n"
@@ -126,6 +148,25 @@ async def cmd_start(message: Message):
             user_type=user_type_text
         )
         await message.answer(message_text)
+
+        # Предложить выбрать часовой пояс
+        from utils.timezones import TIMEZONES
+        builder = InlineKeyboardBuilder()
+
+        for region_key, region_data in TIMEZONES.items():
+            builder.button(
+                text=region_data['name'],
+                callback_data=f"timezone_region_{region_key}"
+            )
+
+        builder.adjust(1)
+
+        timezone_message = """🌍 <b>Выберите ваш часовой пояс</b>
+
+Это поможет отображать время уроков и уведомлений в вашем местном времени.
+Вы всегда сможете изменить его в настройках (/settings)."""
+
+        await message.answer(timezone_message, reply_markup=builder.as_markup(), parse_mode='HTML')
 
     elif 'expired' in result.get('message', '').lower():
         await message.answer(config.MESSAGES['token_expired'])
@@ -252,14 +293,17 @@ async def cmd_today(message: Message):
         await message.answer("📅 На сегодня уроков нет.")
         return
 
+    # Получение timezone пользователя
+    user_timezone = user.timezone if user else None
+
     # Формирование сообщения
     message_text = f"📅 <b>Уроки на сегодня ({result['period']['from']}):</b>\n\n"
 
     for booking in bookings:
         if user.user_type == 'agent':
-            message_text += format_booking_for_agent(booking)
+            message_text += format_booking_for_agent(booking, user_timezone)
         else:
-            message_text += format_booking_for_customer(booking)
+            message_text += format_booking_for_customer(booking, user_timezone)
         message_text += "\n---\n\n"
 
     await message.answer(message_text, parse_mode='HTML')
@@ -287,6 +331,9 @@ async def cmd_week(message: Message):
         await message.answer("📅 На ближайшую неделю уроков нет.")
         return
 
+    # Получение timezone пользователя
+    user_timezone = user.timezone if user else None
+
     # Группировка по датам
     bookings_by_date = {}
     for booking in bookings:
@@ -303,9 +350,9 @@ async def cmd_week(message: Message):
 
         for booking in day_bookings:
             if user.user_type == 'agent':
-                message_text += format_booking_for_agent_short(booking)
+                message_text += format_booking_for_agent_short(booking, user_timezone)
             else:
-                message_text += format_booking_for_customer_short(booking)
+                message_text += format_booking_for_customer_short(booking, user_timezone)
             message_text += "\n"
 
         message_text += "\n"
@@ -328,6 +375,10 @@ async def cmd_settings(message: Message):
     if not settings:
         await message.answer("❌ Настройки не найдены.")
         return
+
+    # Получение текущего часового пояса пользователя
+    user_timezone = user.timezone if user and user.timezone else config.TIMEZONE
+    timezone_name = get_timezone_short_name(user_timezone)
 
     # Формирование клавиатуры с inline кнопками
     builder = InlineKeyboardBuilder()
@@ -366,6 +417,12 @@ async def cmd_settings(message: Message):
         callback_data=f"setting_reminder_time"
     )
 
+    # Часовой пояс
+    builder.button(
+        text=f"🌍 Часовой пояс: {timezone_name}",
+        callback_data="setting_timezone"
+    )
+
     builder.adjust(1)  # По одной кнопке в ряд
 
     message_text = """⚙️ <b>Настройки уведомлений</b>
@@ -375,12 +432,24 @@ async def cmd_settings(message: Message):
     await message.answer(message_text, reply_markup=builder.as_markup(), parse_mode='HTML')
 
 
-def format_booking_for_agent(booking: dict) -> str:
+def format_booking_for_agent(booking: dict, user_timezone: str = None) -> str:
     """Форматирование бронирования для учителя (подробно)"""
     customer = booking['customer']
     service = booking['service']
 
-    text = f"""🕐 <b>{booking['start_time']} - {booking['end_time']}</b>
+    # Конвертация времени в часовой пояс пользователя
+    start_time = booking['start_time']
+    end_time = booking['end_time']
+
+    if user_timezone:
+        _, start_time = format_datetime_with_timezone(
+            booking['start_date'], booking['start_time'], user_timezone
+        )
+        _, end_time = format_datetime_with_timezone(
+            booking['start_date'], booking['end_time'], user_timezone
+        )
+
+    text = f"""🕐 <b>{start_time} - {end_time}</b>
 👤 Ученик: {customer['name']}
 🎵 Инструмент: {service['name']}
 📧 Email: {customer['email']}
@@ -392,12 +461,24 @@ def format_booking_for_agent(booking: dict) -> str:
     return text
 
 
-def format_booking_for_customer(booking: dict) -> str:
+def format_booking_for_customer(booking: dict, user_timezone: str = None) -> str:
     """Форматирование бронирования для ученика (подробно)"""
     agent = booking['agent']
     service = booking['service']
 
-    text = f"""🕐 <b>{booking['start_time']} - {booking['end_time']}</b>
+    # Конвертация времени в часовой пояс пользователя
+    start_time = booking['start_time']
+    end_time = booking['end_time']
+
+    if user_timezone:
+        _, start_time = format_datetime_with_timezone(
+            booking['start_date'], booking['start_time'], user_timezone
+        )
+        _, end_time = format_datetime_with_timezone(
+            booking['start_date'], booking['end_time'], user_timezone
+        )
+
+    text = f"""🕐 <b>{start_time} - {end_time}</b>
 👨‍🏫 Учитель: {agent['name']}
 🎵 Инструмент: {service['name']}"""
 
@@ -407,13 +488,31 @@ def format_booking_for_customer(booking: dict) -> str:
     return text
 
 
-def format_booking_for_agent_short(booking: dict) -> str:
+def format_booking_for_agent_short(booking: dict, user_timezone: str = None) -> str:
     """Форматирование бронирования для учителя (кратко)"""
     customer = booking['customer']
-    return f"  • {booking['start_time']} - {customer['name']} ({booking['service']['name']})"
+
+    # Конвертация времени в часовой пояс пользователя
+    start_time = booking['start_time']
+
+    if user_timezone:
+        _, start_time = format_datetime_with_timezone(
+            booking['start_date'], booking['start_time'], user_timezone
+        )
+
+    return f"  • {start_time} - {customer['name']} ({booking['service']['name']})"
 
 
-def format_booking_for_customer_short(booking: dict) -> str:
+def format_booking_for_customer_short(booking: dict, user_timezone: str = None) -> str:
     """Форматирование бронирования для ученика (кратко)"""
     agent = booking['agent']
-    return f"  • {booking['start_time']} - {agent['name']} ({booking['service']['name']})"
+
+    # Конвертация времени в часовой пояс пользователя
+    start_time = booking['start_time']
+
+    if user_timezone:
+        _, start_time = format_datetime_with_timezone(
+            booking['start_date'], booking['start_time'], user_timezone
+        )
+
+    return f"  • {start_time} - {agent['name']} ({booking['service']['name']})"
