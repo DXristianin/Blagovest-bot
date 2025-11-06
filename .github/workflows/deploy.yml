@@ -82,9 +82,12 @@ jobs:
               cp config.py /tmp/config.py.backup
             fi
 
-            # Сохранить базу данных если существует
-            if [ -f "bot_data.db" ]; then
-              echo "💾 Preserving bot_data.db..."
+            # Сохранить базу данных (приоритет: bot/bot_data.db, затем корневой)
+            if [ -f "bot/bot_data.db" ]; then
+              echo "💾 Preserving bot/bot_data.db..."
+              cp bot/bot_data.db /tmp/bot_data.db.backup
+            elif [ -f "bot_data.db" ]; then
+              echo "💾 Preserving bot_data.db from root..."
               cp bot_data.db /tmp/bot_data.db.backup
             fi
 
@@ -106,11 +109,15 @@ jobs:
               echo "⚠️  Warning: config.py not found. Please create it manually."
             fi
 
-            # Восстановить базу данных
+            # Восстановить базу данных в обе директории
             if [ -f "/tmp/bot_data.db.backup" ]; then
-              echo "♻️  Restoring bot_data.db..."
+              echo "♻️  Restoring bot_data.db to both locations..."
+              # Копировать в bot/ (приоритет, т.к. там её ожидает код)
+              cp /tmp/bot_data.db.backup bot/bot_data.db
+              # Также в корень для совместимости
               cp /tmp/bot_data.db.backup bot_data.db
               rm /tmp/bot_data.db.backup
+              echo "✅ Database restored: bot/bot_data.db and bot_data.db"
             fi
 
             # Создать директорию для логов если её нет
